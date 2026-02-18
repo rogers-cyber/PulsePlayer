@@ -16,7 +16,7 @@ WINDOWS DOWNLOAD (EXE)
 
 Download the latest Windows executable from GitHub Releases:
 
-https://github.com/yourusername/PulsePlayer/releases
+https://github.com/rogers-cyber/PulsePlayer/releases
 
 - No Python required
 - Portable executable
