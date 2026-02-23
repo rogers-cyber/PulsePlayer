@@ -35,19 +35,23 @@ except:
 # ==========================================================
 
 APP_NAME = "PulsePlayer"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"  # upgraded
 APP_AUTHOR = "Mate Technologies"
 APP_WEBSITE = "https://matetools.gumroad.com"
 
 SUPPORTED_AUDIO = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
-
 ROTATION_SPEED = 0.4
 FPS_DELAY = 16
 CROSSFADE_DURATION = 3
-
 CHUNK = 1024
 RATE = 44100
 
+# Path to store playlist
+APP_DATA_DIR = Path.home() / ".PulsePlayer"
+APP_DATA_DIR.mkdir(exist_ok=True)
+PLAYLIST_FILE = APP_DATA_DIR / "playlist.json"
+
+LAST_SESSION_FILE = APP_DATA_DIR / "last_session.json"
 # ==========================================================
 # UTILITIES
 # ==========================================================
@@ -93,13 +97,17 @@ class AudioUtils:
 # PLAYLIST MANAGER
 # ==========================================================
 
+import json
+
 class PlaylistManager:
     def __init__(self):
         self.playlist = []
+        self.load_playlist()
 
     def add_files(self, files):
         valid = [f for f in files if AudioUtils.is_valid_audio(f)]
-        self.playlist.extend(valid)
+        self.playlist.extend([f for f in valid if f not in self.playlist])
+        self.save_playlist()
 
     def filter(self, query):
         if not query:
@@ -108,6 +116,23 @@ class PlaylistManager:
             f for f in self.playlist
             if query.lower() in os.path.basename(f).lower()
         ]
+
+    # ---------------- JSON Persistence ----------------
+    def save_playlist(self):
+        try:
+            with open(PLAYLIST_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.playlist, f, indent=2)
+        except Exception as e:
+            print("Error saving playlist:", e)
+
+    def load_playlist(self):
+        if PLAYLIST_FILE.exists():
+            try:
+                with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+                    self.playlist = json.load(f)
+            except Exception as e:
+                print("Error loading playlist:", e)
+                self.playlist = []
 
 # ==========================================================
 # MUSIC PLAYER ENGINE (NO GUI HERE)
@@ -288,6 +313,61 @@ class SpotifyPlayerApp:
         self._build_ui()
         self._create_menu()
 
+        self.engine.filtered_playlist = self.playlist_manager.playlist.copy()
+        self.refresh_playlist()
+
+        # Load last session track and position
+        self.load_last_session()
+
+    # ---------------- LAST SESSION ----------------
+    def save_last_session(self):
+        """Save current track index and playback position"""
+        if self.engine.current_index >= 0:
+            data = {
+                "track": self.engine.filtered_playlist[self.engine.current_index],
+                "position": self.engine.get_time()
+            }
+            try:
+                with open(LAST_SESSION_FILE, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            except Exception as e:
+                print("Error saving last session:", e)
+
+    def load_last_session(self):
+        """Load last track and resume playback"""
+        if LAST_SESSION_FILE.exists():
+            try:
+                with open(LAST_SESSION_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    track = data.get("track")
+                    pos = data.get("position", 0)
+
+                    if track and os.path.exists(track):
+                        # Ensure playlist includes this track
+                        if track not in self.playlist_manager.playlist:
+                            self.playlist_manager.playlist.append(track)
+
+                        self.engine.filtered_playlist = self.playlist_manager.playlist.copy()
+                        self.refresh_playlist()
+
+                        # Select track in listbox
+                        try:
+                            idx = self.engine.filtered_playlist.index(track)
+                            self.listbox.selection_clear(0, tk.END)
+                            self.listbox.selection_set(idx)
+                            self.engine.current_index = idx
+
+                            # Load track and seek
+                            self.engine.load_track(track)
+                            self.engine.seek(pos)
+                            self.now_label.config(text=f"🎵 {os.path.basename(track)}")
+                            self._load_album_art(track)
+
+                        except Exception as e:
+                            print("Error restoring last track:", e)
+            except Exception as e:
+                print("Error loading last session:", e)
+
     # --------------------------------------------------
     # UI BUILD
     # --------------------------------------------------
@@ -377,6 +457,41 @@ class SpotifyPlayerApp:
 
         self.visualizer = AudioVisualizer(self.canvas, num_bars=50)  # or 60
 
+    # ---------------- Clear All Music  ----------------
+    def clear_all_music(self):
+        """Clear entire playlist"""
+        confirm = messagebox.askyesno("Clear Playlist", "Are you sure you want to remove all tracks?")
+        if not confirm:
+            return
+
+        # Clear playlist manager and filtered playlist
+        self.playlist_manager.playlist.clear()
+        self.playlist_manager.save_playlist()
+
+        self.engine.filtered_playlist.clear()
+        self.engine.current_index = -1
+
+        # Refresh GUI
+        self.refresh_playlist()
+
+        # Stop any playing track
+        self.stop()
+
+        # Reset album art, now playing, and lyrics
+        placeholder = Image.new("RGB", (250, 250), color="#222222")
+        self.album_original = self._apply_circle_mask(placeholder)
+        self.album_photo = ImageTk.PhotoImage(self.album_original)
+        self.album_label.config(image=self.album_photo)
+        self.now_label.config(text="🎵 Now Playing")
+        self.lyrics.delete("1.0", tk.END)
+
+        # Remove last session file
+        if LAST_SESSION_FILE.exists():
+            try:
+                LAST_SESSION_FILE.unlink()
+            except:
+                pass
+
     # ---------------- MENU ----------------
 
     def _create_menu(self):
@@ -384,6 +499,8 @@ class SpotifyPlayerApp:
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="About", command=self._show_about)
         help_menu.add_command(label="Add Files", command=self.add_files)
+        help_menu.add_command(label="Clear All Music", command=self.clear_all_music)
+
         menubar.add_cascade(label="Help", menu=help_menu)
         self.root.config(menu=menubar)
 
@@ -409,7 +526,7 @@ class SpotifyPlayerApp:
         self.lyrics.delete("1.0", tk.END)
         self.lyrics.insert(tk.END, AudioUtils.fetch_lyrics(file))
 
-        threading.Thread(target=self.update_progress_gui(), daemon=True).start()
+        threading.Thread(target=self.update_progress_gui, daemon=True).start()
         self.visualizer.update(self.root, self.engine)
         self.animate_album()
 
@@ -484,8 +601,11 @@ class SpotifyPlayerApp:
                     text=f"{AudioUtils.format_time(pos)} / {AudioUtils.format_time(length)}"
                 )
 
+                # Save last session position
+                self.save_last_session()
+
                 # ------------------ AUTO NEXT / LOOP ------------------
-                if pos >= length - 0.5:  # end of track (small buffer)
+                if pos >= length - 0.5:  # end of track
                     next_idx = self.engine.next_index()
                     if next_idx is not None:
                         self.listbox.selection_clear(0, tk.END)
