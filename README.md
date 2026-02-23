@@ -17,7 +17,7 @@ This repository includes:
 
 Download the latest Windows executable from GitHub Releases:
 
-https://github.com/rogers-cyber/PulsePlayer-v102/releases
+https://github.com/rogers-cyber/PulsePlayer/releases
 
 - No Python required
 - Portable executable
@@ -93,7 +93,7 @@ PulsePlayer/
 
 ### 1. Clone the repository
 
-git clone https://github.com/rogers-cyber/PulsePlayer-v102.git  
+git clone https://github.com/rogers-cyber/PulsePlayer.git  
 cd PulsePlayer
 
 ### 2. Install dependencies
@@ -186,5 +186,6 @@ This project is licensed under the MIT License.
 
 You are free to use, modify, and distribute this software,  
 including the source code and compiled executable, with attribution.
+
 
 See the LICENSE file for full details.
